@@ -2,7 +2,7 @@
  * Konfigurasi frontend.
  * Isi APP_SCRIPT_URL dengan URL Web App Google Apps Script berakhiran /exec.
  */
-const APP_SCRIPT_URL = 'PASTE_APPS_SCRIPT_WEB_APP_URL_HERE';
+const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby-mdsr_0Z9xBJnR0votH2k9ceh11vbGkjghmpBZGwzXRtFKx_S8gZWcLKzWZIOKAJOZA/exec';
 const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
 const fileInput = document.getElementById('fileInput');
