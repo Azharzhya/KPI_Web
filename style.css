@@ -50,6 +50,18 @@ button { cursor: pointer; }
 .panel-heading .overline { margin-bottom: 5px; }
 .panel-heading h2 { margin: 0; font-size: 21px; letter-spacing: -.03em; }
 .small-tag, .target-tag { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700; color: var(--green-800); background: var(--green-50); padding: 7px 10px; border-radius: 999px; border: 1px solid #e0efe4; white-space: nowrap; }
+.target-picker { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; }
+.target-picker legend { padding: 0; margin-bottom: 8px; font-size: 12px; font-weight: 750; }
+.target-switch { display: inline-flex; gap: 4px; padding: 4px; background: var(--green-50); border: 1px solid #dceee2; border-radius: 12px; max-width: 100%; }
+.target-option { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 160px; padding: 9px 16px; border-radius: 9px; color: #4a5950; cursor: pointer; transition: background .15s, color .15s; }
+.target-option input { position: absolute; opacity: 0; pointer-events: none; }
+.target-option strong { font-size: 13px; }
+.target-option span { font-size: 11px; color: var(--muted); }
+.target-option:hover:not(.active) { background: #e6f3ea; }
+.target-option.active { background: var(--green-800); color: #fff; box-shadow: 0 4px 10px #176b4524; }
+.target-option.active span { color: #cfe8d9; }
+.target-option:has(input:focus-visible) { outline: 2px solid var(--green-700); outline-offset: 2px; }
+.target-switch.locked .target-option { opacity: .55; cursor: not-allowed; }
 .drop-zone { min-height: 155px; border: 1.5px dashed #b5d4bf; border-radius: 15px; background: linear-gradient(130deg, #f8fcf9, #fffdf4); display: flex; align-items: center; gap: 16px; padding: 24px; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
 .drop-zone:hover, .drop-zone:focus-visible, .drop-zone.dragging { border-color: var(--green-700); background: #f1faf3; outline: none; }
 .drop-zone.dragging { transform: scale(1.003); }
@@ -137,6 +149,8 @@ footer { border-top: 1px solid #e5ece6; padding: 18px 0 24px; display: flex; jus
   .sheet-picker-wrap { align-items: stretch; flex-direction: column; gap: 7px; }
   .sheet-picker-wrap select { width: 100%; }
   .target-tag { font-size: 10px; }
+  .target-switch { display: flex; }
+  .target-option { flex: 1; min-width: 0; padding: 9px 12px; }
   .warning-box { padding: 13px; gap: 10px; }
   .warning-box p { font-size: 11px; }
   .primary-button { width: 100%; }

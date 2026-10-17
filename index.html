@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#176b45">
-  <meta name="description" content="Impor data anggota dari Excel ke Google Sheets Update_Anggota.">
+  <meta name="description" content="Impor data dari Excel ke Google Sheets Update_Anggota atau Update_Disbursement.">
   <title>DataStaf | Import Excel</title>
   <link rel="stylesheet" href="style.css">
   <!-- SheetJS dipakai untuk membaca file Excel langsung di browser. -->
@@ -19,7 +19,7 @@
       </div>
       <div class="brand-copy">
         <div class="eyebrow">DATASTAF · ADMIN TOOL</div>
-        <h1>Import Data Anggota</h1>
+        <h1>Import Data Excel</h1>
       </div>
       <div class="status-chip"><span class="status-dot"></span> Penggantian data terkontrol</div>
     </header>
@@ -29,7 +29,7 @@
         <div>
           <p class="overline">EXCEL → GOOGLE SHEETS</p>
           <h2>Perbarui data tanpa menyalin manual.</h2>
-          <p class="intro-text">Unggah file Excel, periksa kolomnya, lalu impor ke tab <strong>Update_Anggota</strong> dalam spreadsheet <strong>DataStaf</strong>.</p>
+          <p class="intro-text">Unggah file Excel, periksa kolomnya, lalu impor ke tab <strong class="js-target-tab">Update_Anggota</strong> dalam spreadsheet <strong>DataStaf</strong>.</p>
         </div>
         <div class="hero-illustration" aria-hidden="true">
           <div class="sheet-icon"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -52,6 +52,14 @@
           </div>
           <span class="small-tag">Maks. 25.000 baris</span>
         </div>
+
+        <fieldset class="target-picker">
+          <legend>Tab tujuan impor</legend>
+          <div class="target-switch">
+            <label class="target-option active"><input type="radio" name="importTarget" value="anggota" checked><strong>Anggota</strong><span>Update_Anggota</span></label>
+            <label class="target-option"><input type="radio" name="importTarget" value="disbursement"><strong>Disbursement</strong><span>Update_Disbursement</span></label>
+          </div>
+        </fieldset>
 
         <label id="dropZone" class="drop-zone" for="fileInput" tabindex="0">
           <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb" hidden>
@@ -80,11 +88,11 @@
       <section id="importPanel" class="panel import-panel hidden">
         <div class="panel-heading">
           <div><p class="overline">LANGKAH 2</p><h2>Konfirmasi penggantian data</h2></div>
-          <span class="target-tag"><span class="target-dot"></span> Update_Anggota</span>
+          <span class="target-tag"><span class="target-dot"></span> <span class="js-target-tab">Update_Anggota</span></span>
         </div>
         <div class="warning-box">
           <div class="warning-icon">!</div>
-          <div><strong>Data lama akan diganti</strong><p>Semua isi mulai baris 2 dan seterusnya pada tab <b>Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
+          <div><strong>Data lama akan diganti</strong><p>Semua isi mulai baris 2 dan seterusnya pada tab <b class="js-target-tab">Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
         </div>
         <div class="confirm-row">
           <input id="confirmCheckbox" type="checkbox">

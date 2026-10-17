@@ -5,6 +5,12 @@
 const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby-mdsr_0Z9xBJnR0votH2k9ceh11vbGkjghmpBZGwzXRtFKx_S8gZWcLKzWZIOKAJOZA/exec';
 const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
+// Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
+const IMPORT_TARGETS = {
+  anggota: 'Update_Anggota',
+  disbursement: 'Update_Disbursement'
+};
+
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
 const fileName = document.getElementById('fileName');
@@ -23,10 +29,13 @@ const confirmCheckbox = document.getElementById('confirmCheckbox');
 const importPassword = document.getElementById('importPassword');
 const importButton = document.getElementById('importButton');
 const resultMessage = document.getElementById('resultMessage');
+const targetSwitch = document.querySelector('.target-switch');
+const targetRadios = document.querySelectorAll('input[name="importTarget"]');
 
 let workbook = null;
 let selectedData = null;
 let isSubmitting = false;
+let currentTarget = 'anggota';
 
 function setHidden(element, hidden) {
   element.classList.toggle('hidden', hidden);
@@ -60,6 +69,32 @@ function resetPreview() {
   importButton.disabled = true;
   resultMessage.textContent = '';
   setHidden(resultMessage, true);
+}
+
+function resetFileSelection() {
+  workbook = null;
+  fileInput.value = '';
+  fileName.textContent = 'Klik untuk memilih file Excel';
+  fileHelp.textContent = 'atau seret file ke area ini';
+  setParseError('');
+  resetPreview();
+}
+
+function setTarget(key) {
+  if (!IMPORT_TARGETS[key] || key === currentTarget) return;
+  currentTarget = key;
+  targetRadios.forEach(radio => {
+    radio.checked = radio.value === key;
+    radio.closest('.target-option').classList.toggle('active', radio.checked);
+  });
+  document.querySelectorAll('.js-target-tab').forEach(el => { el.textContent = IMPORT_TARGETS[key]; });
+  // File yang sudah dipilih milik tujuan sebelumnya: kosongkan agar tidak terkirim ke tab yang salah.
+  resetFileSelection();
+}
+
+function lockTarget(locked) {
+  targetRadios.forEach(radio => { radio.disabled = locked; });
+  targetSwitch.classList.toggle('locked', locked);
 }
 
 function isBlank(value) {
@@ -265,6 +300,7 @@ function submitImport() {
   form.style.display = 'none';
   const fields = {
     action: 'importExcel',
+    target: currentTarget,
     confirm: 'REPLACE',
     password: importPassword.value,
     payload: serialized
@@ -279,6 +315,7 @@ function submitImport() {
 
   document.body.appendChild(form);
   isSubmitting = true;
+  lockTarget(true);
   importButton.textContent = 'Mengirim dan mengimpor…';
   updateButtonState();
   setResult('Permintaan sudah dikirim. Jangan tutup halaman sampai hasil impor ditampilkan.', 'loading');
@@ -288,6 +325,7 @@ function submitImport() {
   window.setTimeout(() => {
     if (isSubmitting) {
       isSubmitting = false;
+      lockTarget(false);
       importButton.innerHTML = '<span class="button-icon">↥</span> Impor ke Google Sheets';
       updateButtonState();
       setResult('Belum menerima konfirmasi dari Apps Script. Periksa URL /exec, izin deployment, dan menu Executions di Apps Script sebelum mencoba ulang.', 'error');
@@ -297,6 +335,7 @@ function submitImport() {
 
 fileInput.addEventListener('change', event => handleFile(event.target.files && event.target.files[0]));
 sheetPicker.addEventListener('change', () => parseWorksheet(sheetPicker.value));
+targetRadios.forEach(radio => radio.addEventListener('change', () => setTarget(radio.value)));
 confirmCheckbox.addEventListener('change', updateButtonState);
 importPassword.addEventListener('input', updateButtonState);
 importButton.addEventListener('click', submitImport);
@@ -324,6 +363,7 @@ window.addEventListener('message', event => {
   if (!data || data.type !== 'EXCEL_IMPORT_RESULT' || !data.payload) return;
   const result = data.payload;
   isSubmitting = false;
+  lockTarget(false);
   importButton.innerHTML = '<span class="button-icon">↥</span> Impor ke Google Sheets';
   if (result.ok) {
     importPassword.value = '';
