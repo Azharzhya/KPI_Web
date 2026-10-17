@@ -105,11 +105,19 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-// Tanggal/jam persis seperti tampil di Excel, diambil via UTC getter SheetJS Date untuk menghindari pergeseran zona waktu browser.
+// Tanggal/jam persis seperti tampil di Excel dengan koreksi toleransi floating-point Excel (selisih beberapa detik)
 function dateToWallClock(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  return date.getUTCFullYear() + '-' + pad2(date.getUTCMonth() + 1) + '-' + pad2(date.getUTCDate()) + ' ' +
-    pad2(date.getUTCHours()) + ':' + pad2(date.getUTCMinutes()) + ':00';
+  
+  // Tambahkan toleransi 5 detik (+5000 ms) untuk mengoreksi error floating-point Excel 
+  // yang sering membuat jam 00:00:00 terbaca 23:59:55 - 23:59:59 di hari sebelumnya.
+  const correctedDate = new Date(date.getTime() + 5000);
+  
+  return correctedDate.getUTCFullYear() + '-' + 
+    pad2(correctedDate.getUTCMonth() + 1) + '-' + 
+    pad2(correctedDate.getUTCDate()) + ' ' +
+    pad2(correctedDate.getUTCHours()) + ':' + 
+    pad2(correctedDate.getUTCMinutes()) + ':00';
 }
 
 function makeCellValue(value) {
