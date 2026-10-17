@@ -101,9 +101,25 @@ function isBlank(value) {
   return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+// Tanggal/jam persis seperti tampil di Excel (jam dinding lokal), tanpa konversi ke UTC.
+// Dibulatkan ke menit terdekat karena SheetJS kadang menghasilkan selisih beberapa detik (mis. 23:59:58 hari sebelumnya).
+function dateToWallClock(date) {
+  const d = new Date(Math.round(date.getTime() / 60000) * 60000);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
+    pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':00';
+}
+
 function makeCellValue(value) {
   if (value === null || value === undefined) return '';
-  if (value instanceof Date) return { __excelDate: value.toISOString() };
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return '';
+    // __excelWall dipakai server (anti geser hari); __excelDate dipertahankan agar kompatibel dengan server lama.
+    return { __excelDate: value.toISOString(), __excelWall: dateToWallClock(value) };
+  }
   if (typeof value === 'number' && !Number.isFinite(value)) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'boolean' || typeof value === 'number') return value;
