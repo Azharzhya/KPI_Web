@@ -105,20 +105,22 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-// Tanggal/jam persis seperti tampil di Excel (jam dinding lokal), tanpa konversi ke UTC.
-// Dibulatkan ke menit terdekat karena SheetJS kadang menghasilkan selisih beberapa detik (mis. 23:59:58 hari sebelumnya).
+// Tanggal/jam persis seperti tampil di Excel, diambil via UTC getter SheetJS Date untuk menghindari pergeseran zona waktu browser.
 function dateToWallClock(date) {
-  const d = new Date(Math.round(date.getTime() / 60000) * 60000);
-  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
-    pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':00';
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  return date.getUTCFullYear() + '-' + pad2(date.getUTCMonth() + 1) + '-' + pad2(date.getUTCDate()) + ' ' +
+    pad2(date.getUTCHours()) + ':' + pad2(date.getUTCMinutes()) + ':00';
 }
 
 function makeCellValue(value) {
   if (value === null || value === undefined) return '';
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return '';
-    // __excelWall dipakai server (anti geser hari); __excelDate dipertahankan agar kompatibel dengan server lama.
-    return { __excelDate: value.toISOString(), __excelWall: dateToWallClock(value) };
+    const wallStr = dateToWallClock(value);
+    return { 
+      __excelDate: wallStr.split(' ')[0], 
+      __excelWall: wallStr 
+    };
   }
   if (typeof value === 'number' && !Number.isFinite(value)) return '';
   if (typeof value === 'string') return value;
@@ -215,10 +217,12 @@ function renderPreview() {
     selectedData.headers.forEach((_, colIndex) => {
       const td = document.createElement('td');
       let value = Array.isArray(row) ? row[colIndex] : '';
-      if (value instanceof Date) value = value.toLocaleDateString('id-ID');
-      if (value && typeof value === 'object' && value.__excelDate) {
-        const parsed = new Date(value.__excelDate);
-        value = Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString('id-ID');
+      if (value && typeof value === 'object' && value.__excelWall) {
+        const datePart = value.__excelWall.split(' ')[0];
+        const parts = datePart.split('-');
+        value = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : value.__excelWall;
+      } else if (value instanceof Date) {
+        value = value.toLocaleDateString('id-ID');
       }
       td.textContent = value == null ? '' : String(value);
       tr.appendChild(td);
