@@ -7,13 +7,29 @@ const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
 // Penanda versi. Setelah memilih file Excel, teks di bawah nama file menampilkan versi ini. Bila tidak muncul,
 // browser masih menjalankan app.js lama (cache / belum ter-deploy di GitHub Pages).
-const APP_VERSION = 'v3-serial-2026-10-18';
+const APP_VERSION = 'v4-withdraw-2026-10-18';
 console.info('app.js', APP_VERSION);
 
 // Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
 const IMPORT_TARGETS = {
   anggota: 'Update_Anggota',
-  disbursement: 'Update_Disbursement'
+  disbursement: 'Update_Disbursement',
+  withdraw: 'Update_Withdraw'
+};
+
+/*
+ * Tata letak khusus untuk Excel hasil laporan (ada judul di atas tabel, kolom A kosong, sel digabung/merge).
+ * Tujuan yang TIDAK ada di daftar ini tetap memakai aturan lama: baris 1 = header, kolom A = kolom pertama.
+ *
+ * - headerMarkers: nama kolom yang harus ada pada baris header. Baris header dicari otomatis di scanRows baris pertama
+ *   (huruf besar/kecil, spasi, baris baru, dan tanda baca diabaikan), jadi tidak peduli header ada di baris 5 atau 6.
+ * - Tabel dibaca mulai dari sel header paling kiri (mis. kolom B), jadi kolom A yang kosong otomatis dilewati.
+ * - Sel gabungan (merge): nilainya diletakkan di kolom PALING KIRI gabungan, kolom sisanya dibiarkan kosong.
+ *   Contoh: CLIENTID (Excel C:E) -> Sheet kolom B, kolom C dan D kosong. OFFICERNAME (Excel O:P) -> Sheet kolom N, O kosong.
+ * - Header Excel di baris 5 menjadi baris 1 di Google Sheets, data baris 6 menjadi baris 2.
+ */
+const TARGET_LAYOUTS = {
+  withdraw: { headerMarkers: ['CLIENTID', 'ACCOUNTNO', 'OFFICERNAME'], scanRows: 50 }
 };
 
 const fileInput = document.getElementById('fileInput');
@@ -210,12 +226,93 @@ function makeCellValue(value) {
   return String(value);
 }
 
+// Huruf kecil tanpa spasi/baris baru/tanda baca, supaya "CENTER\nID", "Center ID", dan "CENTER_ID" dianggap sama.
+function normalizeHeaderText(value) {
+  return String(value === null || value === undefined ? '' : value).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Pembaca khusus untuk Excel laporan: cari baris header otomatis, mulai dari kolom header paling kiri,
+// dan lebarkan sampai ujung sel gabungan terakhir di baris header. Hasilnya matriks dengan header di indeks 0.
+function sheetToMatrixByLayout(worksheet, layout) {
+  lastDateStats = { count: 0, sample: null };
+  if (!worksheet['!ref']) return { error: 'Worksheet kosong.' };
+  const range = XLSX.utils.decode_range(worksheet['!ref']);
+  const markers = layout.headerMarkers.map(normalizeHeaderText);
+  const lastScanRow = Math.min(range.e.r, range.s.r + (layout.scanRows || 50) - 1);
+
+  let headerRow = -1;
+  let firstCol = -1;
+  let lastCol = -1;
+  for (let r = range.s.r; r <= lastScanRow && headerRow < 0; r++) {
+    const seen = new Set();
+    let first = -1;
+    let last = -1;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: r, c: c })];
+      const text = normalizeHeaderText(cell && cell.v);
+      if (!text) continue;
+      seen.add(text);
+      if (first < 0) first = c;
+      last = c;
+    }
+    if (markers.every(m => seen.has(m))) {
+      headerRow = r;
+      firstCol = first;
+      lastCol = last;
+    }
+  }
+  if (headerRow < 0) {
+    return {
+      error: 'Baris header tidak ditemukan. Untuk tujuan ini Excel harus punya kolom ' + layout.headerMarkers.join(', ') +
+        ' pada ' + (layout.scanRows || 50) + ' baris pertama. Periksa juga pilihan worksheet.'
+    };
+  }
+
+  // Header terakhir yang digabung (mis. OFFICERNAME di O:P) dihitung sampai ujung gabungannya.
+  (worksheet['!merges'] || []).forEach(m => {
+    if (m.s.r <= headerRow && headerRow <= m.e.r && m.s.c >= firstCol && m.s.c <= lastCol && m.e.c > lastCol) {
+      lastCol = m.e.c;
+    }
+  });
+
+  const matrix = [];
+  for (let r = headerRow; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = firstCol; c <= lastCol; c++) {
+      // Sel gabungan: hanya sel kiri-atas yang berisi nilai di Excel, sel lainnya otomatis kosong.
+      row.push(cellToValue(worksheet[XLSX.utils.encode_cell({ r: r, c: c })]));
+    }
+    matrix.push(row);
+  }
+  return {
+    matrix: matrix,
+    info: {
+      headerRow: headerRow + 1,
+      firstCol: XLSX.utils.encode_col(firstCol),
+      lastCol: XLSX.utils.encode_col(lastCol)
+    }
+  };
+}
+
 function parseWorksheet(sheetName) {
   if (!workbook || !workbook.Sheets[sheetName]) return;
   const worksheet = workbook.Sheets[sheetName];
+  const layout = TARGET_LAYOUTS[currentTarget] || null;
   let matrix;
+  let layoutInfo = null;
   try {
-    matrix = sheetToMatrix(worksheet);
+    if (layout) {
+      const result = sheetToMatrixByLayout(worksheet, layout);
+      if (result.error) {
+        setParseError(result.error);
+        resetPreview();
+        return;
+      }
+      matrix = result.matrix;
+      layoutInfo = result.info;
+    } else {
+      matrix = sheetToMatrix(worksheet);
+    }
   } catch (error) {
     console.error(error);
     setParseError('Worksheet tidak dapat dibaca. Pastikan file Excel tidak rusak atau dilindungi sandi.');
@@ -230,9 +327,13 @@ function parseWorksheet(sheetName) {
     return;
   }
 
-  const headerRow = matrix[0].map(v => wallToDisplay(v).trim());
+  const headerRow = matrix[0].map(v => {
+    const text = wallToDisplay(v).trim();
+    return layout ? text.replace(/\s+/g, ' ') : text; // "CENTER\nID" -> "CENTER ID"
+  });
   let lastHeaderIndex = headerRow.length - 1;
-  while (lastHeaderIndex >= 0 && headerRow[lastHeaderIndex] === '') lastHeaderIndex--;
+  // Tata letak khusus: kolom kosong di ujung kanan adalah bagian dari sel gabungan, jangan dibuang.
+  while (!layout && lastHeaderIndex >= 0 && headerRow[lastHeaderIndex] === '') lastHeaderIndex--;
   if (lastHeaderIndex < 0) {
     setParseError('Baris pertama Excel tidak memiliki nama kolom.');
     resetPreview();
@@ -265,7 +366,8 @@ function parseWorksheet(sheetName) {
     sourceSheet: sheetName,
     headers,
     rows,
-    rawRows: matrix.slice(0, Math.min(matrix.length, 9))
+    rawRows: matrix.slice(0, Math.min(matrix.length, 9)),
+    layoutInfo
   };
   setParseError('');
   renderPreview();
@@ -284,7 +386,13 @@ function renderPreview() {
   const headerTr = document.createElement('tr');
   selectedData.headers.forEach(value => {
     const th = document.createElement('th');
-    th.textContent = value;
+    if (value === '' && selectedData.layoutInfo) {
+      // Kolom sisa dari sel gabungan (merge): sengaja kosong, nilainya ada di kolom kiri.
+      th.textContent = '↳';
+      th.title = 'Bagian dari sel yang digabung (merge); nilainya ada di kolom sebelah kiri';
+    } else {
+      th.textContent = value;
+    }
     headerTr.appendChild(th);
   });
   tbody.appendChild(headerTr);
@@ -300,7 +408,12 @@ function renderPreview() {
     tbody.appendChild(tr);
   });
   previewTable.replaceChildren(tbody);
-  headerStatus.textContent = 'Validasi saat impor';
+  if (selectedData.layoutInfo) {
+    const li = selectedData.layoutInfo;
+    headerStatus.textContent = 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol + ' → baris 1 Sheet';
+  } else {
+    headerStatus.textContent = 'Validasi saat impor';
+  }
   headerStatus.className = 'small-tag neutral-tag';
 }
 
