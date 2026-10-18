@@ -105,34 +105,79 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-// Tanggal/jam persis seperti tampil di Excel dengan koreksi toleransi floating-point Excel (selisih beberapa detik)
-function dateToWallClock(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  
-  // Tambahkan toleransi 5 detik (+5000 ms) untuk mengoreksi error floating-point Excel 
-  // yang sering membuat jam 00:00:00 terbaca 23:59:55 - 23:59:59 di hari sebelumnya.
-  const correctedDate = new Date(date.getTime() + 5000);
-  
-  return correctedDate.getUTCFullYear() + '-' + 
-    pad2(correctedDate.getUTCMonth() + 1) + '-' + 
-    pad2(correctedDate.getUTCDate()) + ' ' +
-    pad2(correctedDate.getUTCHours()) + ':' + 
-    pad2(correctedDate.getUTCMinutes()) + ':00';
+/*
+ * TANGGAL EXCEL
+ * Excel menyimpan tanggal sebagai angka serial (jumlah hari sejak 1899-12-30, pecahan = jam).
+ * Angka itu langsung diubah menjadi teks kalender "yyyy-MM-dd HH:mm:ss" (jam dinding Excel).
+ * Tidak ada objek Date lokal, tidak ada ISO/UTC, dan tidak ada zona waktu yang ikut campur,
+ * jadi 19/10/2026 di Excel selalu menjadi 2026-10-19 di browser mana pun.
+ *
+ * Opsi cellDates milik SheetJS sengaja TIDAK dipakai: ia membuat Date lokal dengan koreksi offset zona waktu
+ * tahun 1899 (yang punya selisih detik), sehingga 00:00:00 bisa terbaca 23:59:56 pada hari sebelumnya.
+ */
+let workbookDate1904 = false;
+
+// Sel angka dengan format tanggal/jam (mis. dd/mm/yyyy, d-mmm-yy, hh:mm) dianggap tanggal.
+function isDateCell(cell) {
+  if (!cell || cell.t !== 'n' || typeof cell.v !== 'number' || !cell.z || cell.z === 'General') return false;
+  if (XLSX.SSF && typeof XLSX.SSF.is_date === 'function') return XLSX.SSF.is_date(cell.z);
+  // Cadangan bila SSF tidak tersedia: buang teks dalam kutip/kurung, lalu cari kode tanggal/jam.
+  return /[dmyhs]/i.test(String(cell.z).replace(/"[^"]*"|\[[^\]]*\]|\\./g, ''));
+}
+
+function excelSerialToValue(serial, date1904) {
+  if (!Number.isFinite(serial) || serial < 0) return '';
+  // Dibulatkan ke detik terdekat untuk membuang galat floating-point (mis. 46314.99999994 = 19/10/2026 00:00:00).
+  const totalSeconds = Math.round(serial * 86400);
+  const days = Math.floor(totalSeconds / 86400);
+  const secs = totalSeconds - days * 86400;
+  const time = pad2(Math.floor(secs / 3600)) + ':' + pad2(Math.floor((secs % 3600) / 60)) + ':' + pad2(secs % 60);
+  if (days === 0) return time; // sel berisi jam saja (tanpa tanggal)
+  // Date dipakai hanya sebagai kalkulator kalender UTC murni: hanya getUTC* yang dibaca.
+  const base = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
+  const d = new Date(base + days * 86400000);
+  return {
+    __excelWall: d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) + ' ' + time
+  };
+}
+
+function cellToValue(cell) {
+  if (!cell || cell.t === 'z' || cell.t === 'e') return '';
+  if (isDateCell(cell)) return excelSerialToValue(cell.v, workbookDate1904);
+  return cell.v === null || cell.v === undefined ? '' : cell.v;
+}
+
+// Pengganti sheet_to_json: membaca sel satu per satu agar angka serial tanggal tidak berubah jadi Date.
+function sheetToMatrix(worksheet) {
+  const matrix = [];
+  if (!worksheet['!ref']) return matrix;
+  const range = XLSX.utils.decode_range(worksheet['!ref']);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      row.push(cellToValue(worksheet[XLSX.utils.encode_cell({ r: r, c: c })]));
+    }
+    matrix.push(row);
+  }
+  return matrix;
+}
+
+// Tampilan untuk preview/header: tanggal murni dd/MM/yyyy, ditambah jam bila bukan 00:00:00.
+function wallToDisplay(value) {
+  if (value && typeof value === 'object' && typeof value.__excelWall === 'string') {
+    const parts = value.__excelWall.split(' ');
+    const ymd = parts[0].split('-');
+    const time = parts[1] || '';
+    return ymd[2] + '/' + ymd[1] + '/' + ymd[0] + (time && time !== '00:00:00' ? ' ' + time : '');
+  }
+  return value === null || value === undefined ? '' : String(value);
 }
 
 function makeCellValue(value) {
   if (value === null || value === undefined) return '';
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return '';
-    const wallStr = dateToWallClock(value);
-    return { 
-      __excelDate: wallStr.split(' ')[0], 
-      __excelWall: wallStr 
-    };
-  }
+  if (typeof value === 'object') return value; // penanda tanggal { __excelWall }
   if (typeof value === 'number' && !Number.isFinite(value)) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'boolean' || typeof value === 'number') return value;
+  if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') return value;
   return String(value);
 }
 
@@ -141,13 +186,9 @@ function parseWorksheet(sheetName) {
   const worksheet = workbook.Sheets[sheetName];
   let matrix;
   try {
-    matrix = XLSX.utils.sheet_to_json(worksheet, {
-      header: 1,
-      defval: '',
-      raw: true,
-      blankrows: true
-    });
+    matrix = sheetToMatrix(worksheet);
   } catch (error) {
+    console.error(error);
     setParseError('Worksheet tidak dapat dibaca. Pastikan file Excel tidak rusak atau dilindungi sandi.');
     resetPreview();
     return;
@@ -160,7 +201,7 @@ function parseWorksheet(sheetName) {
     return;
   }
 
-  const headerRow = matrix[0].map(v => v == null ? '' : String(v).trim());
+  const headerRow = matrix[0].map(v => wallToDisplay(v).trim());
   let lastHeaderIndex = headerRow.length - 1;
   while (lastHeaderIndex >= 0 && headerRow[lastHeaderIndex] === '') lastHeaderIndex--;
   if (lastHeaderIndex < 0) {
@@ -224,15 +265,7 @@ function renderPreview() {
     const tr = document.createElement('tr');
     selectedData.headers.forEach((_, colIndex) => {
       const td = document.createElement('td');
-      let value = Array.isArray(row) ? row[colIndex] : '';
-      if (value && typeof value === 'object' && value.__excelWall) {
-        const datePart = value.__excelWall.split(' ')[0];
-        const parts = datePart.split('-');
-        value = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : value.__excelWall;
-      } else if (value instanceof Date) {
-        value = value.toLocaleDateString('id-ID');
-      }
-      td.textContent = value == null ? '' : String(value);
+      td.textContent = wallToDisplay(Array.isArray(row) ? row[colIndex] : '');
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -259,7 +292,10 @@ async function handleFile(file) {
   fileHelp.textContent = (file.size / 1024).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' KB · membaca file…';
   try {
     const buffer = await file.arrayBuffer();
-    workbook = XLSX.read(buffer, { type: 'array', cellDates: true, cellFormula: false });
+    // cellNF: true -> setiap sel menyimpan format angkanya (cell.z) agar sel tanggal bisa dikenali.
+    // cellDates sengaja tidak dipakai (lihat catatan "TANGGAL EXCEL" di atas).
+    workbook = XLSX.read(buffer, { type: 'array', cellNF: true, cellFormula: false });
+    workbookDate1904 = !!(workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904);
     if (!workbook.SheetNames || !workbook.SheetNames.length) throw new Error('no-sheets');
     sheetPicker.replaceChildren();
     workbook.SheetNames.forEach(name => {
