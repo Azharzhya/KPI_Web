@@ -5,6 +5,11 @@
 const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby-mdsr_0Z9xBJnR0votH2k9ceh11vbGkjghmpBZGwzXRtFKx_S8gZWcLKzWZIOKAJOZA/exec';
 const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
+// Penanda versi. Setelah memilih file Excel, teks di bawah nama file menampilkan versi ini. Bila tidak muncul,
+// browser masih menjalankan app.js lama (cache / belum ter-deploy di GitHub Pages).
+const APP_VERSION = 'v3-serial-2026-10-18';
+console.info('app.js', APP_VERSION);
+
 // Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
 const IMPORT_TARGETS = {
   anggota: 'Update_Anggota',
@@ -117,12 +122,28 @@ function pad2(n) {
  */
 let workbookDate1904 = false;
 
+// Teks tampilan Excel yang berbentuk tanggal, mis. "19/10/2026", "19-10-26", "2026.10.19 07:30:00".
+const DATE_TEXT_RE = /^\s*\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4}(\s+\d{1,2}:\d{2}(:\d{2})?)?\s*$/;
+
 // Sel angka dengan format tanggal/jam (mis. dd/mm/yyyy, d-mmm-yy, hh:mm) dianggap tanggal.
 function isDateCell(cell) {
-  if (!cell || cell.t !== 'n' || typeof cell.v !== 'number' || !cell.z || cell.z === 'General') return false;
-  if (XLSX.SSF && typeof XLSX.SSF.is_date === 'function') return XLSX.SSF.is_date(cell.z);
-  // Cadangan bila SSF tidak tersedia: buang teks dalam kutip/kurung, lalu cari kode tanggal/jam.
-  return /[dmyhs]/i.test(String(cell.z).replace(/"[^"]*"|\[[^\]]*\]|\\./g, ''));
+  if (!cell || cell.t !== 'n' || typeof cell.v !== 'number') return false;
+  if (cell.z && cell.z !== 'General') {
+    if (XLSX.SSF && typeof XLSX.SSF.is_date === 'function') return XLSX.SSF.is_date(cell.z);
+    // Cadangan bila SSF tidak tersedia: buang teks dalam kutip/kurung, lalu cari kode tanggal/jam.
+    return /[dmyhs]/i.test(String(cell.z).replace(/"[^"]*"|\[[^\]]*\]|\\./g, ''));
+  }
+  // Format tidak diketahui: andalkan teks yang tampil di Excel (cell.w), misalnya "19/10/2026".
+  return typeof cell.w === 'string' && DATE_TEXT_RE.test(cell.w) && cell.v > 0 && cell.v < 2958466;
+}
+
+// Statistik pembacaan terakhir, ditampilkan di bawah nama file sebagai bukti tanggal terbaca benar.
+let lastDateStats = { count: 0, sample: null };
+
+function describeDateStats() {
+  if (!lastDateStats.count) return 'tanggal terdeteksi: 0 sel';
+  const s = lastDateStats.sample;
+  return 'tanggal terdeteksi: ' + lastDateStats.count.toLocaleString('id-ID') + ' sel (contoh: serial ' + s.serial + ' → ' + wallToDisplay({ __excelWall: s.wall }) + ')';
 }
 
 function excelSerialToValue(serial, date1904) {
@@ -143,13 +164,21 @@ function excelSerialToValue(serial, date1904) {
 
 function cellToValue(cell) {
   if (!cell || cell.t === 'z' || cell.t === 'e') return '';
-  if (isDateCell(cell)) return excelSerialToValue(cell.v, workbookDate1904);
+  if (isDateCell(cell)) {
+    const value = excelSerialToValue(cell.v, workbookDate1904);
+    if (value && typeof value === 'object') {
+      lastDateStats.count++;
+      if (!lastDateStats.sample) lastDateStats.sample = { serial: cell.v, wall: value.__excelWall };
+    }
+    return value;
+  }
   return cell.v === null || cell.v === undefined ? '' : cell.v;
 }
 
 // Pengganti sheet_to_json: membaca sel satu per satu agar angka serial tanggal tidak berubah jadi Date.
 function sheetToMatrix(worksheet) {
   const matrix = [];
+  lastDateStats = { count: 0, sample: null };
   if (!worksheet['!ref']) return matrix;
   const range = XLSX.utils.decode_range(worksheet['!ref']);
   for (let r = range.s.r; r <= range.e.r; r++) {
@@ -307,7 +336,8 @@ async function handleFile(file) {
     setHidden(sheetPickerWrap, workbook.SheetNames.length < 2);
     sheetPicker.value = workbook.SheetNames[0];
     parseWorksheet(sheetPicker.value);
-    fileHelp.textContent = (file.size / 1024).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' KB · file siap diperiksa';
+    fileHelp.textContent = (file.size / 1024).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' KB · file siap diperiksa · ' +
+      describeDateStats() + ' · app.js ' + APP_VERSION;
     if (!isEndpointConfigured()) {
       setResult('Satu konfigurasi belum diisi: edit APP_SCRIPT_URL di app.js dengan URL Web App Apps Script yang berakhiran /exec.', 'error');
     }
