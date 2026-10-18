@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#176b45">
-  <meta name="description" content="Impor data dari Excel ke Google Sheets Update_Anggota atau Update_Disbursement.">
+  <meta name="description" content="Impor data Excel ke Google Sheets: Update_Anggota, Update_Disbursement, dan Update_Withdraw.">
   <title>DataStaf | Import Excel</title>
   <link rel="stylesheet" href="style.css">
   <!-- SheetJS dipakai untuk membaca file Excel langsung di browser. -->
@@ -53,13 +53,14 @@
           <span class="small-tag">Maks. 25.000 baris</span>
         </div>
 
-        <fieldset class="target-picker">
-          <legend>Tab tujuan impor</legend>
-          <div class="target-switch">
-            <label class="target-option active"><input type="radio" name="importTarget" value="anggota" checked><strong>Anggota</strong><span>Update_Anggota</span></label>
-            <label class="target-option"><input type="radio" name="importTarget" value="disbursement"><strong>Disbursement</strong><span>Update_Disbursement</span></label>
+        <div class="target-block">
+          <p class="target-label">Tujuan impor</p>
+          <div class="target-switch" role="radiogroup" aria-label="Tujuan impor">
+            <label class="target-option active"><input type="radio" name="importTarget" value="anggota" checked><span class="target-name">Update_Anggota</span><span class="target-desc">Data anggota</span></label>
+            <label class="target-option"><input type="radio" name="importTarget" value="disbursement"><span class="target-name">Update_Disbursement</span><span class="target-desc">Pencairan pinjaman</span></label>
+            <label class="target-option"><input type="radio" name="importTarget" value="withdraw"><span class="target-name">Update_Withdraw</span><span class="target-desc">Penarikan simpanan · header dicari otomatis</span></label>
           </div>
-        </fieldset>
+        </div>
 
         <label id="dropZone" class="drop-zone" for="fileInput" tabindex="0">
           <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb" hidden>
