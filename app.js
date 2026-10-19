@@ -7,7 +7,7 @@ const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
 // Penanda versi. Setelah memilih file Excel, teks di bawah nama file menampilkan versi ini. Bila tidak muncul,
 // browser masih menjalankan app.js lama (cache / belum ter-deploy di GitHub Pages).
-const APP_VERSION = 'v4-withdraw-2026-10-18';
+const APP_VERSION = 'v5-anggota-2026-10-19';
 console.info('app.js', APP_VERSION);
 
 // Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
@@ -27,9 +27,23 @@ const IMPORT_TARGETS = {
  * - Sel gabungan (merge): nilainya diletakkan di kolom PALING KIRI gabungan, kolom sisanya dibiarkan kosong.
  *   Contoh: CLIENTID (Excel C:E) -> Sheet kolom B, kolom C dan D kosong. OFFICERNAME (Excel O:P) -> Sheet kolom N, O kosong.
  * - Header Excel di baris 5 menjadi baris 1 di Google Sheets, data baris 6 menjadi baris 2.
+ * - collapseMerged: false (bawaan) = kolom sisa merge tetap ada sebagai kolom kosong (Sheet punya kolom A-O).
+ *   true = kolom sisa merge DIBUANG, jadi tiap merge hanya jadi satu kolom (Sheet harus punya 12 kolom A-L:
+ *   CLIENTID di B lalu CLIENTNAME di C, ..., OFFICERNAME di L). Ubah ke true HANYA bila kolom C, D, O di Sheet
+ *   sudah dihapus dan tidak ada rumus/skrip lain yang membaca Update_Withdraw berdasarkan huruf kolom.
+ * - endAtHeader: tabel hanya dibaca sampai kolom dengan header ini (kolom di kanannya diabaikan). Bila header itu tidak
+ *   ada di Excel, tabel dibaca sampai kolom header terakhir.
+ * - skipNotesBeforeKey: baris di bawah header yang kolom kuncinya kosong (mis. baris catatan format "(Text 12 Kar)")
+ *   dilewati; data dimulai dari baris pertama yang kolom kuncinya terisi.
+ * - cleanHeaderSpaces: spasi/baris baru di dalam nama header dirapikan jadi satu spasi ("CENTER\nID" -> "CENTER ID").
+ * - fallbackClassic: bila baris header TIDAK ditemukan, pakai pembaca lama (baris 1 = header, kolom A = kolom pertama),
+ *   sehingga Excel format lama tetap diproses seperti sebelumnya.
  */
 const TARGET_LAYOUTS = {
-  withdraw: { headerMarkers: ['CLIENTID', 'ACCOUNTNO', 'OFFICERNAME'], scanRows: 50 }
+  withdraw: { headerMarkers: ['CLIENTID', 'ACCOUNTNO', 'OFFICERNAME'], scanRows: 50, collapseMerged: false, cleanHeaderSpaces: true },
+  // Excel laporan MdClientInfo: header baris 3, baris 4-5 catatan format, data mulai baris 6, kolom B sampai Z.
+  anggota:  { headerMarkers: ['ID Anggota', 'Nama Anggota', 'NO. KTP'], scanRows: 50, endAtHeader: 'Nama Staf Lapang',
+              skipNotesBeforeKey: 'ID Anggota', fallbackClassic: true }
 };
 
 const fileInput = document.getElementById('fileInput');
@@ -264,8 +278,18 @@ function sheetToMatrixByLayout(worksheet, layout) {
   if (headerRow < 0) {
     return {
       error: 'Baris header tidak ditemukan. Untuk tujuan ini Excel harus punya kolom ' + layout.headerMarkers.join(', ') +
-        ' pada ' + (layout.scanRows || 50) + ' baris pertama. Periksa juga pilihan worksheet.'
+        ' pada ' + (layout.scanRows || 50) + ' baris pertama. Periksa juga pilihan worksheet.',
+      notFound: true
     };
+  }
+
+  // Batas kanan tabel: berhenti di kolom header endAtHeader bila ada (mis. Excel MdClientInfo: sampai "Nama Staf Lapang").
+  if (layout.endAtHeader) {
+    const endKey = normalizeHeaderText(layout.endAtHeader);
+    for (let c = firstCol; c <= lastCol; c++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c: c })];
+      if (normalizeHeaderText(cell && cell.v) === endKey) { lastCol = c; break; }
+    }
   }
 
   // Header terakhir yang digabung (mis. OFFICERNAME di O:P) dihitung sampai ujung gabungannya.
@@ -275,10 +299,51 @@ function sheetToMatrixByLayout(worksheet, layout) {
     }
   });
 
+  // Kolom mana yang dibaca. Bawaan: semua kolom firstCol..lastCol. Dengan collapseMerged: kolom sisa merge pada baris header
+  // (bukan kolom paling kiri sebuah merge) dibuang, sehingga tiap merge menjadi satu kolom.
+  const cols = [];
+  const dropped = [];
+  for (let c = firstCol; c <= lastCol; c++) {
+    const isRest = (worksheet['!merges'] || []).some(m => m.s.r <= headerRow && headerRow <= m.e.r && m.s.c < c && c <= m.e.c);
+    if (layout.collapseMerged && isRest) dropped.push(c);
+    else cols.push(c);
+  }
+
+  // Baris pertama data. Bawaan: tepat di bawah header. Dengan skipNotesBeforeKey: lewati baris catatan yang kolom kuncinya kosong.
+  let dataStart = headerRow + 1;
+  if (layout.skipNotesBeforeKey) {
+    const keyNorm = normalizeHeaderText(layout.skipNotesBeforeKey);
+    let keyCol = -1;
+    for (let c = firstCol; c <= lastCol; c++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c: c })];
+      if (normalizeHeaderText(cell && cell.v) === keyNorm) { keyCol = c; break; }
+    }
+    if (keyCol >= 0) {
+      const limit = Math.min(range.e.r, headerRow + 10);
+      let r = headerRow + 1;
+      while (r <= limit) {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: r, c: keyCol })];
+        if (cell && cell.t !== 'z' && cell.v !== null && cell.v !== undefined && String(cell.v).trim() !== '') break;
+        r++;
+      }
+      if (r <= limit) dataStart = r; // bila tidak ada baris berkunci dalam 10 baris, jangan melewati apa pun
+    }
+  }
+
   const matrix = [];
   for (let r = headerRow; r <= range.e.r; r++) {
+    if (r > headerRow && r < dataStart) continue; // baris catatan di antara header dan data
+    // Jangan membuang data diam-diam: kolom sisa merge seharusnya selalu kosong.
+    if (r > headerRow) {
+      for (const c of dropped) {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: r, c: c })];
+        if (cell && cell.t !== 'z' && cell.v !== null && cell.v !== undefined && String(cell.v).trim() !== '') {
+          return { error: 'Ada isi di kolom ' + XLSX.utils.encode_col(c) + ' baris Excel ' + (r + 1) + ' yang seharusnya bagian dari kolom gabungan (merge). Kolom tidak bisa digabung tanpa menghilangkan data.' };
+        }
+      }
+    }
     const row = [];
-    for (let c = firstCol; c <= lastCol; c++) {
+    for (const c of cols) {
       // Sel gabungan: hanya sel kiri-atas yang berisi nilai di Excel, sel lainnya otomatis kosong.
       row.push(cellToValue(worksheet[XLSX.utils.encode_cell({ r: r, c: c })]));
     }
@@ -288,8 +353,11 @@ function sheetToMatrixByLayout(worksheet, layout) {
     matrix: matrix,
     info: {
       headerRow: headerRow + 1,
+      dataRow: dataStart + 1,
       firstCol: XLSX.utils.encode_col(firstCol),
-      lastCol: XLSX.utils.encode_col(lastCol)
+      lastCol: XLSX.utils.encode_col(lastCol),
+      collapsed: dropped.length > 0,
+      columnCount: cols.length
     }
   };
 }
@@ -297,19 +365,24 @@ function sheetToMatrixByLayout(worksheet, layout) {
 function parseWorksheet(sheetName) {
   if (!workbook || !workbook.Sheets[sheetName]) return;
   const worksheet = workbook.Sheets[sheetName];
-  const layout = TARGET_LAYOUTS[currentTarget] || null;
+  let layout = TARGET_LAYOUTS[currentTarget] || null;
   let matrix;
   let layoutInfo = null;
   try {
     if (layout) {
       const result = sheetToMatrixByLayout(worksheet, layout);
-      if (result.error) {
+      if (result.notFound && layout.fallbackClassic) {
+        // Header tidak ditemukan: perlakukan seperti Excel format lama (baris 1 = header, mulai kolom A).
+        layout = null;
+        matrix = sheetToMatrix(worksheet);
+      } else if (result.error) {
         setParseError(result.error);
         resetPreview();
         return;
+      } else {
+        matrix = result.matrix;
+        layoutInfo = result.info;
       }
-      matrix = result.matrix;
-      layoutInfo = result.info;
     } else {
       matrix = sheetToMatrix(worksheet);
     }
@@ -329,7 +402,7 @@ function parseWorksheet(sheetName) {
 
   const headerRow = matrix[0].map(v => {
     const text = wallToDisplay(v).trim();
-    return layout ? text.replace(/\s+/g, ' ') : text; // "CENTER\nID" -> "CENTER ID"
+    return layout && layout.cleanHeaderSpaces ? text.replace(/\s+/g, ' ') : text; // "CENTER\nID" -> "CENTER ID"
   });
   let lastHeaderIndex = headerRow.length - 1;
   // Tata letak khusus: kolom kosong di ujung kanan adalah bagian dari sel gabungan, jangan dibuang.
@@ -410,7 +483,8 @@ function renderPreview() {
   previewTable.replaceChildren(tbody);
   if (selectedData.layoutInfo) {
     const li = selectedData.layoutInfo;
-    headerStatus.textContent = 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol + ' → baris 1 Sheet';
+    headerStatus.textContent = 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol +
+      (li.collapsed ? ' · merge digabung → ' + li.columnCount + ' kolom' : '') + ' · data mulai baris ' + li.dataRow + ' → baris 1 & 2 Sheet';
   } else {
     headerStatus.textContent = 'Validasi saat impor';
   }
