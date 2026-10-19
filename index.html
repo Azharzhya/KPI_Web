@@ -18,8 +18,8 @@
         <svg viewBox="0 0 48 48" role="img"><rect x="5" y="4" width="29" height="36" rx="5" fill="currentColor" opacity=".16"/><path d="M13 10h17a4 4 0 0 1 4 4v25a4 4 0 0 1-4 4H13a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4Z" fill="currentColor"/><path d="M17 19h9M17 25h9M17 31h9" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><path d="m31 5 8 8h-5a3 3 0 0 1-3-3Z" fill="#f4c542"/></svg>
       </div>
       <div class="brand-copy">
-        <div class="eyebrow">DATASTAF · ADMIN TOOL</div>
-        <h1>Import Data Excel</h1>
+        <div class="eyebrow">KPI SUPPORT APPLICATION</div>
+        <h1>Formulir Import Data</h1>
       </div>
       <div class="status-chip"><span class="status-dot"></span> Penggantian data terkontrol</div>
     </div>
@@ -30,9 +30,9 @@
     <main>
       <section class="intro">
         <div>
-          <p class="overline">EXCEL → GOOGLE SHEETS</p>
+          <p class="overline">Dari Excel ke Database</p>
           <h2>Perbarui data tanpa menyalin manual.</h2>
-          <p class="intro-text">Unggah file Excel, periksa kolomnya, lalu impor ke tab <strong class="js-target-tab">Update_Anggota</strong> dalam spreadsheet <strong>DataStaf</strong>.</p>
+          <p class="intro-text">Fitur untuk Import data ke tabel <strong class="js-target-tab">Update_Anggota</strong></p>
         </div>
         <div class="hero-illustration" aria-hidden="true">
           <div class="sheet-icon"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -96,16 +96,16 @@
         </div>
         <div class="warning-box">
           <div class="warning-icon">!</div>
-          <div><strong>Data lama akan diganti</strong><p>Semua isi mulai baris 2 dan seterusnya pada tab <b class="js-target-tab">Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
+          <div><strong>Data lama akan diganti</strong><p>Semua dan seterusnya pada tab <b class="js-target-tab">Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
         </div>
         <div class="confirm-row">
           <input id="confirmCheckbox" type="checkbox">
-          <label for="confirmCheckbox">Saya sudah memeriksa file dan memahami bahwa data lama mulai baris 2 akan diganti.</label>
+          <label for="confirmCheckbox">• Saya sudah memeriksa file dan mengerti data lama akan diperbarui.</label>
         </div>
         <div class="password-field">
-          <label for="importPassword">Kata sandi impor</label>
+          <label for="importPassword">Kata sandi import</label>
           <input id="importPassword" type="password" autocomplete="current-password" placeholder="Masukkan kata sandi admin" maxlength="200">
-          <p>Kata sandi diverifikasi oleh Google Apps Script dan tidak disimpan di halaman ini.</p>
+          <p>Silahkan masukan kata sandi yang sesuai.</p>
         </div>
         <button id="importButton" class="primary-button" type="button" disabled><span class="button-icon">↥</span> Impor ke Google Sheets</button>
         <div id="resultMessage" class="result-message hidden" role="status" aria-live="polite"></div>
@@ -113,11 +113,11 @@
 
       <section class="security-note">
         <div class="security-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.4-2.8 7.8-7 10-4.2-2.2-7-5.6-7-10V6l7-3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div><strong>Validasi sebelum menulis</strong><p>Impor ditolak jika header berbeda, jumlah kolom tidak cocok, kata sandi salah, atau Excel tidak memiliki baris data. Nilai sel disalin sebagai data, bukan rumus Excel.</p></div>
+        <div><strong>Validasi yang wajib lolos</strong><p>Impor diterima jika: 1. Header pada tabel sesuai, 2. Jumlah kolom tabel cocok, 3. kata sandi sesuai, dan 4. Excel memiliki data yang dilampirkan, Semua data akan di salin jika semua validasi sesuai.</p></div>
       </section>
     </main>
 
-    <footer><span>DataStaf Import Tool</span><span>GitHub Pages + Google Apps Script</span></footer>
+    <footer><span>DataStaf Import Tool</span><span>@AzharZhya</span></footer>
   </div>
 
   <iframe id="gasResultFrame" name="gasResultFrame" title="Hasil proses impor" class="hidden-frame"></iframe>
