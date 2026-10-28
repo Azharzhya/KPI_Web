@@ -7,7 +7,7 @@ const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
 // Penanda versi. Setelah memilih file Excel, teks di bawah nama file menampilkan versi ini. Bila tidak muncul,
 // browser masih menjalankan app.js lama (cache / belum ter-deploy di GitHub Pages).
-const APP_VERSION = 'v6-karyawan-upsert-2026-10-28';
+const APP_VERSION = 'v6-karyawan-2026-10-24';
 console.info('app.js', APP_VERSION);
 
 // Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
@@ -15,15 +15,13 @@ const IMPORT_TARGETS = {
   anggota: 'Update_Anggota',
   disbursement: 'Update_Disbursement',
   withdraw: 'Update_Withdraw',
-  karyawan: 'Upload_Karyawan'
+  karyawan: 'Update_Karyawan'
 };
 
-// Cara tujuan memperlakukan isi tab. 'upsert' = NIK yang sama diperbarui, NIK baru ditambah di bawah, data lain dipertahankan
-// (server: KaryawanUpsert.gs). Tujuan yang tidak tercantum = 'replace' (isi baris 2 dst. diganti seluruhnya).
-const TARGET_MODES = { karyawan: 'upsert' };
-// Tujuan yang boleh memakai file .csv (semua isinya teks/tanggal, jadi aman dibaca sebagai teks).
-const CSV_TARGETS = { karyawan: true };
-function targetMode(key) { return TARGET_MODES[key] || 'replace'; }
+// Mode impor. Bawaan = "replace": isi tab dari baris 2 ke bawah DIGANTI seluruhnya oleh Excel.
+// "merge" (Update_Karyawan) = GABUNG per NIK: NIK yang sama diperbarui di barisnya, NIK baru ditambahkan di baris paling bawah,
+// NIK yang hanya ada di Sheet dipertahankan. Backend: KaryawanImport.gs.
+const MERGE_TARGETS = { karyawan: true };
 
 /*
  * Tata letak khusus untuk Excel hasil laporan (ada judul di atas tabel, kolom A kosong, sel digabung/merge).
@@ -44,7 +42,6 @@ function targetMode(key) { return TARGET_MODES[key] || 'replace'; }
  * - skipNotesBeforeKey: baris di bawah header yang kolom kuncinya kosong (mis. baris catatan format "(Text 12 Kar)")
  *   dilewati; data dimulai dari baris pertama yang kolom kuncinya terisi.
  * - cleanHeaderSpaces: spasi/baris baru di dalam nama header dirapikan jadi satu spasi ("CENTER\nID" -> "CENTER ID").
- * - startAtHeader: tabel dibaca mulai dari kolom dengan header ini (kolom di kirinya, mis. kolom nomor urut "No", diabaikan).
  * - fallbackClassic: bila baris header TIDAK ditemukan, pakai pembaca lama (baris 1 = header, kolom A = kolom pertama),
  *   sehingga Excel format lama tetap diproses seperti sebelumnya.
  */
@@ -53,10 +50,13 @@ const TARGET_LAYOUTS = {
   // Excel laporan MdClientInfo: header baris 3, baris 4-5 catatan format, data mulai baris 6, kolom B sampai Z.
   anggota:  { headerMarkers: ['ID Anggota', 'Nama Anggota', 'NO. KTP'], scanRows: 50, endAtHeader: 'Nama Staf Lapang',
               skipNotesBeforeKey: 'ID Anggota', fallbackClassic: true },
-  // Excel HRIS: judul di baris 1, header di baris 2 (kolom B "No" diabaikan; Regional, NIK, NAMA, JABATAN, CABANG di C-G, Sejak di H),
-  // data mulai baris 3. Baris header dicari otomatis, jadi tetap terbaca bila judul bertambah / header turun beberapa baris.
-  karyawan: { headerMarkers: ['Regional', 'NIK', 'NAMA', 'JABATAN', 'CABANG', 'Sejak'], scanRows: 20, startAtHeader: 'Regional' }
+  // Excel HRIS Komida: judul di baris 1, header di baris 2 mulai kolom C (kolom B = "No" tidak dipakai), data mulai baris 3.
+  // Kolom C-H = Regional, NIK, NAMA, JABATAN, CABANG, Sejak. Letak tetap (fixed): bukan dicari otomatis, sesuai ketentuan.
+  // Kolom kosong di ujung kanan header dibuang (mis. Excel tanpa kolom Sejak tetap bisa diimpor). Tanggal Sejak berupa teks yyyy-mm-dd.
+  karyawan: { fixed: true, headerRow: 2, firstCol: 'C', lastCol: 'H', dataRow: 3, headerMarkers: ['NIK', 'NAMA', 'JABATAN', 'CABANG'] }
 };
+
+function isMergeTarget() { return !!MERGE_TARGETS[currentTarget]; }
 
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -75,6 +75,11 @@ const importPanel = document.getElementById('importPanel');
 const confirmCheckbox = document.getElementById('confirmCheckbox');
 const importPassword = document.getElementById('importPassword');
 const importButton = document.getElementById('importButton');
+const simulateRow = document.getElementById('simulateRow');
+const simulateCheckbox = document.getElementById('simulateCheckbox');
+const warnTitle = document.getElementById('warnTitle');
+const warnText = document.getElementById('warnText');
+const confirmLabel = document.getElementById('confirmLabel');
 const resultMessage = document.getElementById('resultMessage');
 const targetSwitch = document.querySelector('.target-switch');
 const targetRadios = document.querySelectorAll('input[name="importTarget"]');
@@ -99,8 +104,41 @@ function setResult(message, type) {
   setHidden(resultMessage, false);
 }
 
+// Simulasi (hanya mode gabung) tidak menulis apa pun, jadi tidak perlu centang konfirmasi.
+function isSimulating() { return isMergeTarget() && !!simulateCheckbox && simulateCheckbox.checked; }
+
+function importButtonHtml() {
+  return isSimulating() ? '<span class="button-icon">🔍</span> Simulasikan (tanpa menulis)'
+    : isMergeTarget() ? '<span class="button-icon">↥</span> Gabungkan ke Google Sheets'
+    : '<span class="button-icon">↥</span> Impor ke Google Sheets';
+}
+
 function updateButtonState() {
-  importButton.disabled = !selectedData || !confirmCheckbox.checked || !importPassword.value || isSubmitting || !isEndpointConfigured();
+  const needConfirm = !isSimulating();
+  importButton.disabled = !selectedData || (needConfirm && !confirmCheckbox.checked) || !importPassword.value || isSubmitting || !isEndpointConfigured();
+  if (!isSubmitting) importButton.innerHTML = importButtonHtml();
+}
+
+// Teks peringatan, konfirmasi, dan tombol menyesuaikan mode (ganti seluruh isi / gabung per NIK)
+function applyModeUi() {
+  const merge = isMergeTarget();
+  setHidden(simulateRow, !merge);
+  if (!merge && simulateCheckbox) simulateCheckbox.checked = false;
+  if (warnTitle && warnText) {
+    if (merge) {
+      warnTitle.textContent = 'Data digabung per NIK (data lama tidak dihapus)';
+      warnText.innerHTML = 'NIK yang sudah ada di tab <b class="js-target-tab">Update_Karyawan</b> diperbarui di barisnya (Regional, NAMA, JABATAN, CABANG, SEJAK). NIK baru ditambahkan di baris paling bawah. NIK yang hanya ada di Sheet dipertahankan, dan kolom lain seperti KodeCabang dan NoWA tidak diubah. Sel Excel yang kosong tidak menghapus data Sheet.';
+    } else {
+      warnTitle.textContent = 'Data lama akan diganti';
+      warnText.innerHTML = 'Semua dan seterusnya pada tab <b class="js-target-tab">' + IMPORT_TARGETS[currentTarget] + '</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.';
+    }
+  }
+  if (confirmLabel) {
+    confirmLabel.textContent = merge
+      ? '• Saya sudah memeriksa file dan mengerti NIK yang sama akan diperbarui dan NIK baru ditambahkan.'
+      : '• Saya sudah memeriksa file dan mengerti data lama akan diperbarui.';
+  }
+  updateButtonState();
 }
 
 function isEndpointConfigured() {
@@ -135,16 +173,9 @@ function setTarget(key) {
     radio.closest('.target-option').classList.toggle('active', radio.checked);
   });
   document.querySelectorAll('.js-target-tab').forEach(el => { el.textContent = IMPORT_TARGETS[key]; });
-  applyModeTexts();
   // File yang sudah dipilih milik tujuan sebelumnya: kosongkan agar tidak terkirim ke tab yang salah.
   resetFileSelection();
-}
-
-// Teks peringatan / konfirmasi berbeda untuk mode 'replace' (isi tab diganti) dan 'upsert' (isi tab dipertahankan).
-function applyModeTexts() {
-  const mode = targetMode(currentTarget);
-  document.querySelectorAll('[data-mode]').forEach(el => setHidden(el, el.dataset.mode !== mode));
-  fileInput.accept = CSV_TARGETS[currentTarget] ? '.xlsx,.xls,.xlsm,.xlsb,.csv' : '.xlsx,.xls,.xlsm,.xlsb';
+  applyModeUi();
 }
 
 function lockTarget(locked) {
@@ -303,15 +334,6 @@ function sheetToMatrixByLayout(worksheet, layout) {
     };
   }
 
-  // Batas kiri tabel: mulai dari kolom header startAtHeader bila ada (mis. lewati kolom nomor urut "No").
-  if (layout.startAtHeader) {
-    const startKey = normalizeHeaderText(layout.startAtHeader);
-    for (let c = firstCol; c <= lastCol; c++) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c: c })];
-      if (normalizeHeaderText(cell && cell.v) === startKey) { firstCol = c; break; }
-    }
-  }
-
   // Batas kanan tabel: berhenti di kolom header endAtHeader bila ada (mis. Excel MdClientInfo: sampai "Nama Staf Lapang").
   if (layout.endAtHeader) {
     const endKey = normalizeHeaderText(layout.endAtHeader);
@@ -391,6 +413,48 @@ function sheetToMatrixByLayout(worksheet, layout) {
   };
 }
 
+// Pembaca letak TETAP (Excel HRIS): header di baris layout.headerRow mulai kolom layout.firstCol sampai layout.lastCol,
+// data mulai baris layout.dataRow. Kolom di sebelah kiri firstCol (mis. "No") diabaikan. Header kosong di ujung kanan dibuang.
+function sheetToMatrixFixed(worksheet, layout) {
+  lastDateStats = { count: 0, sample: null };
+  if (!worksheet['!ref']) return { error: 'Worksheet kosong.' };
+  const range = XLSX.utils.decode_range(worksheet['!ref']);
+  const hr = layout.headerRow - 1;
+  const c1 = XLSX.utils.decode_col(layout.firstCol);
+  let c2 = XLSX.utils.decode_col(layout.lastCol);
+  const headerText = c => {
+    const cell = worksheet[XLSX.utils.encode_cell({ r: hr, c: c })];
+    return cell && cell.v !== null && cell.v !== undefined ? String(cell.v).replace(/\s+/g, ' ').trim() : '';
+  };
+  while (c2 > c1 && !headerText(c2)) c2--;                         // buang kolom header kosong di ujung kanan
+  const found = [];
+  for (let c = c1; c <= c2; c++) found.push(headerText(c));
+  const seen = new Set(found.map(normalizeHeaderText));
+  const missing = layout.headerMarkers.filter(m => !seen.has(normalizeHeaderText(m)));
+  const where = 'baris ' + layout.headerRow + ' kolom ' + layout.firstCol + '–' + layout.lastCol;
+  if (missing.length) {
+    return {
+      error: 'Header tidak sesuai. Pada ' + where + ' harus ada kolom ' + layout.headerMarkers.join(', ') + '. Tidak ditemukan: ' + missing.join(', ') +
+        '. Yang terbaca: ' + (found.filter(Boolean).join(', ') || '(kosong)') + '. Periksa juga pilihan worksheet.'
+    };
+  }
+  const blankAt = found.findIndex(t => !t);
+  if (blankAt > -1) {
+    return { error: 'Ada header kosong di ' + where + ' (kolom ' + XLSX.utils.encode_col(c1 + blankAt) + '). Semua header dari ' + layout.firstCol + ' sampai kolom terakhir harus terisi.' };
+  }
+  const matrix = [found];
+  const dataStart = layout.dataRow - 1;
+  for (let r = dataStart; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = c1; c <= c2; c++) row.push(cellToValue(worksheet[XLSX.utils.encode_cell({ r: r, c: c })]));
+    matrix.push(row);
+  }
+  return {
+    matrix: matrix,
+    info: { headerRow: layout.headerRow, dataRow: layout.dataRow, firstCol: layout.firstCol, lastCol: XLSX.utils.encode_col(c2), collapsed: false, columnCount: c2 - c1 + 1, fixed: true }
+  };
+}
+
 function parseWorksheet(sheetName) {
   if (!workbook || !workbook.Sheets[sheetName]) return;
   const worksheet = workbook.Sheets[sheetName];
@@ -399,7 +463,7 @@ function parseWorksheet(sheetName) {
   let layoutInfo = null;
   try {
     if (layout) {
-      const result = sheetToMatrixByLayout(worksheet, layout);
+      const result = layout.fixed ? sheetToMatrixFixed(worksheet, layout) : sheetToMatrixByLayout(worksheet, layout);
       if (result.notFound && layout.fallbackClassic) {
         // Header tidak ditemukan: perlakukan seperti Excel format lama (baris 1 = header, mulai kolom A).
         layout = null;
@@ -512,62 +576,23 @@ function renderPreview() {
   previewTable.replaceChildren(tbody);
   if (selectedData.layoutInfo) {
     const li = selectedData.layoutInfo;
-    headerStatus.textContent = 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol +
-      (li.collapsed ? ' · merge digabung → ' + li.columnCount + ' kolom' : '') + ' · data mulai baris ' + li.dataRow +
-      (targetMode(currentTarget) === 'upsert' ? ' → upsert per NIK' : ' → baris 1 & 2 Sheet');
+    headerStatus.textContent = li.fixed
+      ? 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol + ' · data mulai baris ' + li.dataRow + ' → digabung per NIK'
+      : 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol +
+        (li.collapsed ? ' · merge digabung → ' + li.columnCount + ' kolom' : '') + ' · data mulai baris ' + li.dataRow + ' → baris 1 & 2 Sheet';
   } else {
     headerStatus.textContent = 'Validasi saat impor';
   }
   headerStatus.className = 'small-tag neutral-tag';
 }
 
-/*
- * CSV (hanya untuk tujuan di CSV_TARGETS). Dibaca dengan pembaca sendiri, bukan pembaca CSV SheetJS, supaya SEMUA sel tetap TEKS:
- * "000155/2009", "007", dan "2025-12-07" tidak ditebak menjadi angka / tanggal. Pemisah (koma, titik koma, tab) dideteksi dari
- * baris pertama, karena CSV hasil Excel berbahasa Indonesia biasanya memakai titik koma.
- */
-function parseCsvText(text) {
-  text = String(text).replace(/^﻿/, '');
-  // Pemisah = karakter yang paling sering muncul (di luar tanda kutip) pada 10 baris tak kosong pertama; judul di baris 1 tidak mengecoh.
-  const sample = text.split(/\r\n|\n|\r/).filter(l => l.trim() !== '').slice(0, 10).map(l => l.replace(/"[^"]*"/g, '')).join('\n');
-  const count = ch => sample.split(ch).length - 1;
-  let sep = ',';
-  if (count(';') > count(sep)) sep = ';';
-  if (count('\t') > count(sep)) sep = '\t';
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
-      } else field += ch;
-    } else if (ch === '"' && field === '') {
-      quoted = true;
-    } else if (ch === sep) {
-      row.push(field); field = '';
-    } else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && text[i + 1] === '\n') i++;
-      row.push(field); field = '';
-      rows.push(row); row = [];
-    } else field += ch;
-  }
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows;
-}
-
 async function handleFile(file) {
   resetPreview();
   setParseError('');
   if (!file) return;
-  const isCsv = /\.csv$/i.test(file.name);
-  const allowed = /\.(xlsx|xls|xlsm|xlsb)$/i.test(file.name) || (isCsv && CSV_TARGETS[currentTarget]);
+  const allowed = /\.(xlsx|xls|xlsm|xlsb)$/i.test(file.name);
   if (!allowed) {
-    setParseError(isCsv
-      ? 'File .csv hanya bisa dipakai untuk tujuan ' + Object.keys(CSV_TARGETS).map(k => IMPORT_TARGETS[k]).join(', ') + '. Untuk tujuan ini pilih file Excel (.xlsx, .xls, .xlsm, atau .xlsb).'
-      : 'Pilih file Excel berformat .xlsx, .xls, .xlsm, atau .xlsb' + (CSV_TARGETS[currentTarget] ? ' (atau .csv)' : '') + '.');
+    setParseError('Pilih file Excel berformat .xlsx, .xls, .xlsm, atau .xlsb.');
     return;
   }
   if (typeof XLSX === 'undefined') {
@@ -577,15 +602,10 @@ async function handleFile(file) {
   fileName.textContent = file.name;
   fileHelp.textContent = (file.size / 1024).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' KB · membaca file…';
   try {
-    if (isCsv) {
-      // Semua sel CSV berupa teks (aoa_to_sheet tidak menebak tipe), tanggal "2025-12-07" diterjemahkan server.
-      workbook = { SheetNames: ['CSV'], Sheets: { CSV: XLSX.utils.aoa_to_sheet(parseCsvText(await file.text())) }, Workbook: {} };
-    } else {
-      const buffer = await file.arrayBuffer();
-      // cellNF: true -> setiap sel menyimpan format angkanya (cell.z) agar sel tanggal bisa dikenali.
-      // cellDates sengaja tidak dipakai (lihat catatan "TANGGAL EXCEL" di atas).
-      workbook = XLSX.read(buffer, { type: 'array', cellNF: true, cellFormula: false });
-    }
+    const buffer = await file.arrayBuffer();
+    // cellNF: true -> setiap sel menyimpan format angkanya (cell.z) agar sel tanggal bisa dikenali.
+    // cellDates sengaja tidak dipakai (lihat catatan "TANGGAL EXCEL" di atas).
+    workbook = XLSX.read(buffer, { type: 'array', cellNF: true, cellFormula: false });
     workbookDate1904 = !!(workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904);
     if (!workbook.SheetNames || !workbook.SheetNames.length) throw new Error('no-sheets');
     sheetPicker.replaceChildren();
@@ -615,10 +635,9 @@ async function handleFile(file) {
 function buildPayload() {
   const payload = {
     sourceSheet: selectedData.sourceSheet,
+    dataRow: selectedData.layoutInfo ? selectedData.layoutInfo.dataRow : 2,   // nomor baris Excel data pertama (agar pesan galat menunjuk baris yang benar)
     headers: selectedData.headers,
-    rows: selectedData.rows,
-    // Nomor baris Excel dari baris data pertama; dipakai server untuk menyebut baris yang bermasalah ("Baris Excel 17: ...").
-    dataStartRow: selectedData.layoutInfo ? selectedData.layoutInfo.dataRow : 2
+    rows: selectedData.rows
   };
   const serialized = JSON.stringify(payload);
   if (serialized.length > MAX_PAYLOAD_CHARS) {
@@ -633,8 +652,8 @@ function submitImport() {
     setResult('URL Apps Script belum dikonfigurasi. Isi APP_SCRIPT_URL di app.js terlebih dahulu.', 'error');
     return;
   }
-  if (!confirmCheckbox.checked) {
-    setResult('Centang konfirmasi penggantian data sebelum melanjutkan.', 'error');
+  if (!isSimulating() && !confirmCheckbox.checked) {
+    setResult(isMergeTarget() ? 'Centang konfirmasi penggabungan data sebelum melanjutkan.' : 'Centang konfirmasi penggantian data sebelum melanjutkan.', 'error');
     return;
   }
   if (!importPassword.value) {
@@ -659,10 +678,11 @@ function submitImport() {
   const fields = {
     action: 'importExcel',
     target: currentTarget,
-    confirm: targetMode(currentTarget) === 'upsert' ? 'UPSERT' : 'REPLACE',
+    confirm: isMergeTarget() ? 'MERGE' : 'REPLACE',
     password: importPassword.value,
     payload: serialized
   };
+  if (isSimulating()) fields.dryRun = '1';
   Object.entries(fields).forEach(([key, value]) => {
     const input = document.createElement('input');
     input.type = 'hidden';
@@ -674,7 +694,7 @@ function submitImport() {
   document.body.appendChild(form);
   isSubmitting = true;
   lockTarget(true);
-  importButton.textContent = 'Mengirim dan mengimpor…';
+  importButton.textContent = isSimulating() ? 'Mengirim dan menghitung…' : 'Mengirim dan mengimpor…';
   updateButtonState();
   setResult('Permintaan sudah dikirim. Jangan tutup halaman sampai hasil impor ditampilkan.', 'loading');
   form.submit();
@@ -684,7 +704,6 @@ function submitImport() {
     if (isSubmitting) {
       isSubmitting = false;
       lockTarget(false);
-      importButton.innerHTML = '<span class="button-icon">↥</span> Impor ke Google Sheets';
       updateButtonState();
       setResult('Belum menerima konfirmasi dari Apps Script. Periksa URL /exec, izin deployment, dan menu Executions di Apps Script sebelum mencoba ulang.', 'error');
     }
@@ -695,6 +714,7 @@ fileInput.addEventListener('change', event => handleFile(event.target.files && e
 sheetPicker.addEventListener('change', () => parseWorksheet(sheetPicker.value));
 targetRadios.forEach(radio => radio.addEventListener('change', () => setTarget(radio.value)));
 confirmCheckbox.addEventListener('change', updateButtonState);
+if (simulateCheckbox) simulateCheckbox.addEventListener('change', updateButtonState);
 importPassword.addEventListener('input', updateButtonState);
 importButton.addEventListener('click', submitImport);
 
@@ -722,14 +742,15 @@ window.addEventListener('message', event => {
   const result = data.payload;
   isSubmitting = false;
   lockTarget(false);
-  importButton.innerHTML = '<span class="button-icon">↥</span> Impor ke Google Sheets';
-  if (result.ok) {
+  if (result.ok && result.dryRun) {
+    // Simulasi: tidak ada yang ditulis, jadi kata sandi dan pilihan dibiarkan agar bisa langsung dilanjutkan ke impor sungguhan.
+    updateButtonState();
+    setResult(result.message || 'Simulasi selesai.', 'success');
+  } else if (result.ok) {
     importPassword.value = '';
     confirmCheckbox.checked = false;
     updateButtonState();
-    // Mode upsert: pesan server sudah memuat rincian (diperbarui / baru / dipertahankan), jadi tidak perlu ringkasan baris-kolom lagi.
-    const details = result.mode === 'upsert' ? '' :
-      ' ' + Number(result.rows || 0).toLocaleString('id-ID') + ' baris dan ' + Number(result.columns || 0).toLocaleString('id-ID') + ' kolom berhasil diproses.';
+    const details = ' ' + Number(result.rows || 0).toLocaleString('id-ID') + ' baris dan ' + Number(result.columns || 0).toLocaleString('id-ID') + ' kolom berhasil diproses.';
     setResult((result.message || 'Impor berhasil.') + details, 'success');
   } else {
     updateButtonState();
@@ -737,5 +758,4 @@ window.addEventListener('message', event => {
   }
 });
 
-applyModeTexts();
-updateButtonState();
+applyModeUi();

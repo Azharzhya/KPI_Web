@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#176b45">
-  <meta name="description" content="Impor data Excel ke Google Sheets: Update_Anggota, Update_Disbursement, Update_Withdraw, dan Upload_Karyawan (upsert per NIK).">
+  <meta name="description" content="Impor data Excel ke Google Sheets: Update_Anggota, Update_Disbursement, dan Update_Withdraw.">
   <title>DataStaf | Import Excel</title>
   <link rel="stylesheet" href="style.css">
   <!-- SheetJS dipakai untuk membaca file Excel langsung di browser. -->
@@ -44,7 +44,7 @@
       <section class="workflow-grid" aria-label="Langkah impor">
         <article class="step-card"><div class="step-no">01</div><div><h3>Pilih Excel</h3><p>File .xlsx atau .xls</p></div></article>
         <article class="step-card"><div class="step-no">02</div><div><h3>Periksa data</h3><p>Pastikan header cocok</p></div></article>
-        <article class="step-card"><div class="step-no">03</div><div><h3>Impor data</h3><p><span data-mode="replace">Baris 1 tetap aman</span><span data-mode="upsert" class="hidden">Data lama tetap aman</span></p></div></article>
+        <article class="step-card"><div class="step-no">03</div><div><h3>Impor data</h3><p>Baris 1 tetap aman</p></div></article>
       </section>
 
       <section class="panel upload-panel">
@@ -62,7 +62,7 @@
             <label class="target-option active"><input type="radio" name="importTarget" value="anggota" checked><span class="target-name">Update_Anggota</span><span class="target-desc">Data anggota · header dicari otomatis</span></label>
             <label class="target-option"><input type="radio" name="importTarget" value="disbursement"><span class="target-name">Update_Disbursement</span><span class="target-desc">Pencairan pinjaman</span></label>
             <label class="target-option"><input type="radio" name="importTarget" value="withdraw"><span class="target-name">Update_Withdraw</span><span class="target-desc">Penarikan simpanan · header dicari otomatis</span></label>
-            <label class="target-option"><input type="radio" name="importTarget" value="karyawan"><span class="target-name">Upload_Karyawan</span><span class="target-desc">Data karyawan HRIS · upsert per NIK, data lama dipertahankan · .xlsx / .csv</span></label>
+            <label class="target-option"><input type="radio" name="importTarget" value="karyawan"><span class="target-name">Update_Karyawan</span><span class="target-desc">Data karyawan (HRIS) · digabung per NIK, data lama tidak dihapus</span></label>
           </div>
         </div>
 
@@ -92,19 +92,20 @@
 
       <section id="importPanel" class="panel import-panel hidden">
         <div class="panel-heading">
-          <div><p class="overline">LANGKAH 2</p><h2><span data-mode="replace">Konfirmasi penggantian data</span><span data-mode="upsert" class="hidden">Konfirmasi pembaruan data</span></h2></div>
+          <div><p class="overline">LANGKAH 2</p><h2>Konfirmasi penggantian data</h2></div>
           <span class="target-tag"><span class="target-dot"></span> <span class="js-target-tab">Update_Anggota</span></span>
         </div>
         <div class="warning-box">
           <div class="warning-icon">!</div>
-          <div>
-            <div data-mode="replace"><strong>Data lama akan diganti</strong><p>Semua dan seterusnya pada tab <b class="js-target-tab">Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
-            <div data-mode="upsert" class="hidden"><strong>Data lama dipertahankan (upsert per NIK)</strong><p>Pada tab <b class="js-target-tab">Upload_Karyawan</b>: NIK yang sudah ada diperbarui pada barisnya sendiri (Regional, Nama, Jabatan, Cabang, Sejak), NIK baru ditambahkan di baris paling bawah, dan NIK yang tidak ada di Excel tidak dihapus. Kolom lain seperti NoWA tidak diubah. Sel Excel yang kosong tidak menimpa data yang sudah ada.</p></div>
-          </div>
+          <div><strong id="warnTitle">Data lama akan diganti</strong><p id="warnText">Semua dan seterusnya pada tab <b class="js-target-tab">Update_Anggota</b> akan dihapus lalu diganti dengan data Excel. Baris 1 (header) tetap dipertahankan.</p></div>
         </div>
         <div class="confirm-row">
           <input id="confirmCheckbox" type="checkbox">
-          <label for="confirmCheckbox"><span data-mode="replace">• Saya sudah memeriksa file dan mengerti data lama akan diperbarui.</span><span data-mode="upsert" class="hidden">• Saya sudah memeriksa file dan mengerti: NIK yang sama akan diperbarui dan NIK baru ditambahkan di bawah.</span></label>
+          <label id="confirmLabel" for="confirmCheckbox">• Saya sudah memeriksa file dan mengerti data lama akan diperbarui.</label>
+        </div>
+        <div id="simulateRow" class="confirm-row hidden">
+          <input id="simulateCheckbox" type="checkbox">
+          <label for="simulateCheckbox">• <b>Simulasi saja</b>: hitung dulu NIK mana yang diperbarui / ditambahkan dan tampilkan contohnya, tanpa menulis apa pun ke Google Sheets.</label>
         </div>
         <div class="password-field">
           <label for="importPassword">Kata sandi import</label>
