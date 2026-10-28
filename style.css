@@ -190,7 +190,7 @@ button, label, select, input { touch-action: manipulation; }
 /* --- Pilihan tujuan impor --- */
 .target-block { margin-bottom: 14px; }
 .target-label { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--text-muted); }
-.target-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.target-switch { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
 .target-option { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: transform .12s; }
 .target-option input { position: absolute; opacity: 0; pointer-events: none; }
 .target-option:active { transform: scale(.98); }
@@ -252,7 +252,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .button-icon { font-size: 18px; line-height: 1; }
 
 /* --- Pesan --- */
-.result-message, .inline-message { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.result-message, .inline-message { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-line; }
 .result-message.success, .inline-message.success { background: var(--success-soft); color: var(--success-text); }
 .result-message.error, .inline-message.error { background: var(--danger-soft); color: var(--danger-text); }
 .result-message.loading { background: var(--warn-soft); color: var(--warn-text); }

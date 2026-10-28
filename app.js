@@ -7,15 +7,23 @@ const MAX_PAYLOAD_CHARS = 7 * 1024 * 1024;
 
 // Penanda versi. Setelah memilih file Excel, teks di bawah nama file menampilkan versi ini. Bila tidak muncul,
 // browser masih menjalankan app.js lama (cache / belum ter-deploy di GitHub Pages).
-const APP_VERSION = 'v5-anggota-2026-10-19';
+const APP_VERSION = 'v6-karyawan-upsert-2026-10-28';
 console.info('app.js', APP_VERSION);
 
 // Tujuan impor. Kuncinya dikirim ke server; nama tab di sini hanya untuk tampilan (server punya daftar sendiri).
 const IMPORT_TARGETS = {
   anggota: 'Update_Anggota',
   disbursement: 'Update_Disbursement',
-  withdraw: 'Update_Withdraw'
+  withdraw: 'Update_Withdraw',
+  karyawan: 'Upload_Karyawan'
 };
+
+// Cara tujuan memperlakukan isi tab. 'upsert' = NIK yang sama diperbarui, NIK baru ditambah di bawah, data lain dipertahankan
+// (server: KaryawanUpsert.gs). Tujuan yang tidak tercantum = 'replace' (isi baris 2 dst. diganti seluruhnya).
+const TARGET_MODES = { karyawan: 'upsert' };
+// Tujuan yang boleh memakai file .csv (semua isinya teks/tanggal, jadi aman dibaca sebagai teks).
+const CSV_TARGETS = { karyawan: true };
+function targetMode(key) { return TARGET_MODES[key] || 'replace'; }
 
 /*
  * Tata letak khusus untuk Excel hasil laporan (ada judul di atas tabel, kolom A kosong, sel digabung/merge).
@@ -36,6 +44,7 @@ const IMPORT_TARGETS = {
  * - skipNotesBeforeKey: baris di bawah header yang kolom kuncinya kosong (mis. baris catatan format "(Text 12 Kar)")
  *   dilewati; data dimulai dari baris pertama yang kolom kuncinya terisi.
  * - cleanHeaderSpaces: spasi/baris baru di dalam nama header dirapikan jadi satu spasi ("CENTER\nID" -> "CENTER ID").
+ * - startAtHeader: tabel dibaca mulai dari kolom dengan header ini (kolom di kirinya, mis. kolom nomor urut "No", diabaikan).
  * - fallbackClassic: bila baris header TIDAK ditemukan, pakai pembaca lama (baris 1 = header, kolom A = kolom pertama),
  *   sehingga Excel format lama tetap diproses seperti sebelumnya.
  */
@@ -43,7 +52,10 @@ const TARGET_LAYOUTS = {
   withdraw: { headerMarkers: ['CLIENTID', 'ACCOUNTNO', 'OFFICERNAME'], scanRows: 50, collapseMerged: false, cleanHeaderSpaces: true },
   // Excel laporan MdClientInfo: header baris 3, baris 4-5 catatan format, data mulai baris 6, kolom B sampai Z.
   anggota:  { headerMarkers: ['ID Anggota', 'Nama Anggota', 'NO. KTP'], scanRows: 50, endAtHeader: 'Nama Staf Lapang',
-              skipNotesBeforeKey: 'ID Anggota', fallbackClassic: true }
+              skipNotesBeforeKey: 'ID Anggota', fallbackClassic: true },
+  // Excel HRIS: judul di baris 1, header di baris 2 (kolom B "No" diabaikan; Regional, NIK, NAMA, JABATAN, CABANG di C-G, Sejak di H),
+  // data mulai baris 3. Baris header dicari otomatis, jadi tetap terbaca bila judul bertambah / header turun beberapa baris.
+  karyawan: { headerMarkers: ['Regional', 'NIK', 'NAMA', 'JABATAN', 'CABANG', 'Sejak'], scanRows: 20, startAtHeader: 'Regional' }
 };
 
 const fileInput = document.getElementById('fileInput');
@@ -123,8 +135,16 @@ function setTarget(key) {
     radio.closest('.target-option').classList.toggle('active', radio.checked);
   });
   document.querySelectorAll('.js-target-tab').forEach(el => { el.textContent = IMPORT_TARGETS[key]; });
+  applyModeTexts();
   // File yang sudah dipilih milik tujuan sebelumnya: kosongkan agar tidak terkirim ke tab yang salah.
   resetFileSelection();
+}
+
+// Teks peringatan / konfirmasi berbeda untuk mode 'replace' (isi tab diganti) dan 'upsert' (isi tab dipertahankan).
+function applyModeTexts() {
+  const mode = targetMode(currentTarget);
+  document.querySelectorAll('[data-mode]').forEach(el => setHidden(el, el.dataset.mode !== mode));
+  fileInput.accept = CSV_TARGETS[currentTarget] ? '.xlsx,.xls,.xlsm,.xlsb,.csv' : '.xlsx,.xls,.xlsm,.xlsb';
 }
 
 function lockTarget(locked) {
@@ -281,6 +301,15 @@ function sheetToMatrixByLayout(worksheet, layout) {
         ' pada ' + (layout.scanRows || 50) + ' baris pertama. Periksa juga pilihan worksheet.',
       notFound: true
     };
+  }
+
+  // Batas kiri tabel: mulai dari kolom header startAtHeader bila ada (mis. lewati kolom nomor urut "No").
+  if (layout.startAtHeader) {
+    const startKey = normalizeHeaderText(layout.startAtHeader);
+    for (let c = firstCol; c <= lastCol; c++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c: c })];
+      if (normalizeHeaderText(cell && cell.v) === startKey) { firstCol = c; break; }
+    }
   }
 
   // Batas kanan tabel: berhenti di kolom header endAtHeader bila ada (mis. Excel MdClientInfo: sampai "Nama Staf Lapang").
@@ -484,20 +513,61 @@ function renderPreview() {
   if (selectedData.layoutInfo) {
     const li = selectedData.layoutInfo;
     headerStatus.textContent = 'Header baris ' + li.headerRow + ' · kolom ' + li.firstCol + '–' + li.lastCol +
-      (li.collapsed ? ' · merge digabung → ' + li.columnCount + ' kolom' : '') + ' · data mulai baris ' + li.dataRow + ' → baris 1 & 2 Sheet';
+      (li.collapsed ? ' · merge digabung → ' + li.columnCount + ' kolom' : '') + ' · data mulai baris ' + li.dataRow +
+      (targetMode(currentTarget) === 'upsert' ? ' → upsert per NIK' : ' → baris 1 & 2 Sheet');
   } else {
     headerStatus.textContent = 'Validasi saat impor';
   }
   headerStatus.className = 'small-tag neutral-tag';
 }
 
+/*
+ * CSV (hanya untuk tujuan di CSV_TARGETS). Dibaca dengan pembaca sendiri, bukan pembaca CSV SheetJS, supaya SEMUA sel tetap TEKS:
+ * "000155/2009", "007", dan "2025-12-07" tidak ditebak menjadi angka / tanggal. Pemisah (koma, titik koma, tab) dideteksi dari
+ * baris pertama, karena CSV hasil Excel berbahasa Indonesia biasanya memakai titik koma.
+ */
+function parseCsvText(text) {
+  text = String(text).replace(/^﻿/, '');
+  // Pemisah = karakter yang paling sering muncul (di luar tanda kutip) pada 10 baris tak kosong pertama; judul di baris 1 tidak mengecoh.
+  const sample = text.split(/\r\n|\n|\r/).filter(l => l.trim() !== '').slice(0, 10).map(l => l.replace(/"[^"]*"/g, '')).join('\n');
+  const count = ch => sample.split(ch).length - 1;
+  let sep = ',';
+  if (count(';') > count(sep)) sep = ';';
+  if (count('\t') > count(sep)) sep = '\t';
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
+      } else field += ch;
+    } else if (ch === '"' && field === '') {
+      quoted = true;
+    } else if (ch === sep) {
+      row.push(field); field = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
 async function handleFile(file) {
   resetPreview();
   setParseError('');
   if (!file) return;
-  const allowed = /\.(xlsx|xls|xlsm|xlsb)$/i.test(file.name);
+  const isCsv = /\.csv$/i.test(file.name);
+  const allowed = /\.(xlsx|xls|xlsm|xlsb)$/i.test(file.name) || (isCsv && CSV_TARGETS[currentTarget]);
   if (!allowed) {
-    setParseError('Pilih file Excel berformat .xlsx, .xls, .xlsm, atau .xlsb.');
+    setParseError(isCsv
+      ? 'File .csv hanya bisa dipakai untuk tujuan ' + Object.keys(CSV_TARGETS).map(k => IMPORT_TARGETS[k]).join(', ') + '. Untuk tujuan ini pilih file Excel (.xlsx, .xls, .xlsm, atau .xlsb).'
+      : 'Pilih file Excel berformat .xlsx, .xls, .xlsm, atau .xlsb' + (CSV_TARGETS[currentTarget] ? ' (atau .csv)' : '') + '.');
     return;
   }
   if (typeof XLSX === 'undefined') {
@@ -507,10 +577,15 @@ async function handleFile(file) {
   fileName.textContent = file.name;
   fileHelp.textContent = (file.size / 1024).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + ' KB · membaca file…';
   try {
-    const buffer = await file.arrayBuffer();
-    // cellNF: true -> setiap sel menyimpan format angkanya (cell.z) agar sel tanggal bisa dikenali.
-    // cellDates sengaja tidak dipakai (lihat catatan "TANGGAL EXCEL" di atas).
-    workbook = XLSX.read(buffer, { type: 'array', cellNF: true, cellFormula: false });
+    if (isCsv) {
+      // Semua sel CSV berupa teks (aoa_to_sheet tidak menebak tipe), tanggal "2025-12-07" diterjemahkan server.
+      workbook = { SheetNames: ['CSV'], Sheets: { CSV: XLSX.utils.aoa_to_sheet(parseCsvText(await file.text())) }, Workbook: {} };
+    } else {
+      const buffer = await file.arrayBuffer();
+      // cellNF: true -> setiap sel menyimpan format angkanya (cell.z) agar sel tanggal bisa dikenali.
+      // cellDates sengaja tidak dipakai (lihat catatan "TANGGAL EXCEL" di atas).
+      workbook = XLSX.read(buffer, { type: 'array', cellNF: true, cellFormula: false });
+    }
     workbookDate1904 = !!(workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904);
     if (!workbook.SheetNames || !workbook.SheetNames.length) throw new Error('no-sheets');
     sheetPicker.replaceChildren();
@@ -541,7 +616,9 @@ function buildPayload() {
   const payload = {
     sourceSheet: selectedData.sourceSheet,
     headers: selectedData.headers,
-    rows: selectedData.rows
+    rows: selectedData.rows,
+    // Nomor baris Excel dari baris data pertama; dipakai server untuk menyebut baris yang bermasalah ("Baris Excel 17: ...").
+    dataStartRow: selectedData.layoutInfo ? selectedData.layoutInfo.dataRow : 2
   };
   const serialized = JSON.stringify(payload);
   if (serialized.length > MAX_PAYLOAD_CHARS) {
@@ -582,7 +659,7 @@ function submitImport() {
   const fields = {
     action: 'importExcel',
     target: currentTarget,
-    confirm: 'REPLACE',
+    confirm: targetMode(currentTarget) === 'upsert' ? 'UPSERT' : 'REPLACE',
     password: importPassword.value,
     payload: serialized
   };
@@ -650,7 +727,9 @@ window.addEventListener('message', event => {
     importPassword.value = '';
     confirmCheckbox.checked = false;
     updateButtonState();
-    const details = ' ' + Number(result.rows || 0).toLocaleString('id-ID') + ' baris dan ' + Number(result.columns || 0).toLocaleString('id-ID') + ' kolom berhasil diproses.';
+    // Mode upsert: pesan server sudah memuat rincian (diperbarui / baru / dipertahankan), jadi tidak perlu ringkasan baris-kolom lagi.
+    const details = result.mode === 'upsert' ? '' :
+      ' ' + Number(result.rows || 0).toLocaleString('id-ID') + ' baris dan ' + Number(result.columns || 0).toLocaleString('id-ID') + ' kolom berhasil diproses.';
     setResult((result.message || 'Impor berhasil.') + details, 'success');
   } else {
     updateButtonState();
@@ -658,4 +737,5 @@ window.addEventListener('message', event => {
   }
 });
 
+applyModeTexts();
 updateButtonState();
