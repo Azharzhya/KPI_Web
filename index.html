@@ -3,13 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#176b45">
+  <meta name="theme-color" content="#2b6cb0">
+  <meta name="application-name" content="DataStaf">
+  <meta name="apple-mobile-web-app-title" content="DataStaf">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="description" content="Impor data Excel ke Google Sheets: Update_Anggota, Update_Disbursement, dan Update_Withdraw.">
   <title>DataStaf | Import Excel</title>
   <link rel="stylesheet" href="style.css">
   <!-- SheetJS dipakai untuk membaca file Excel langsung di browser. -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script defer src="app.js"></script>
+  <script defer src="pwa.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -28,6 +34,13 @@
   <div class="page-shell">
 
     <main>
+      <div id="installBanner" class="install-banner hidden" role="region" aria-label="Pasang aplikasi">
+        <img class="install-icon" src="icons/icon-192.png" alt="" width="40" height="40">
+        <div class="install-copy"><strong>Pasang di layar utama HP</strong><p>Buka lebih cepat seperti aplikasi, tanpa mengetik alamat web.</p></div>
+        <button id="installButton" class="install-button" type="button">Pasang</button>
+        <button id="installDismiss" class="install-dismiss" type="button" aria-label="Tutup">×</button>
+      </div>
+
       <section class="intro">
         <div>
           <p class="overline">Dari Excel ke Database</p>
